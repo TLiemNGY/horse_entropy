@@ -9,13 +9,10 @@ import streamlit as st
 # Helpers
 # -------------------------------
 def parse_fractional_odds(token: str) -> float:
-    """Convert fractional odds like '8/1' or '5/2' to decimal odds."""
     num, den = token.split("/", 1)
     return 1.0 + (float(num) / float(den))
 
-
 def parse_numeric_token(token: str, use_comma_decimal: bool) -> float:
-    """Parse a token that might be decimal (dot/comma) or fractional odds 'a/b'."""
     token = token.strip()
     if not token:
         raise ValueError("Empty token")
@@ -25,21 +22,16 @@ def parse_numeric_token(token: str, use_comma_decimal: bool) -> float:
         token = token.replace(",", ".")
     return float(token)
 
-
 def parse_pasted_list(raw: str, use_comma_decimal: bool) -> List[float]:
-    """Split by comma, semicolon, whitespace."""
     tmp = raw.replace(";", " ").replace(",", " ").replace("\n", " ").replace("\t", " ")
     tokens = [t for t in tmp.split(" ") if t.strip() != ""]
     if not tokens:
         return []
     return [parse_numeric_token(tok, use_comma_decimal) for tok in tokens]
 
-
 def implied_probabilities_from_decimal_odds(odds: List[float]) -> Tuple[List[float], float]:
-    """Return raw implied probs p_i = 1/odds_i and overround (sum(p_i)-1)."""
     raw = [1.0 / o for o in odds]
     return raw, (sum(raw) - 1.0)
-
 
 def normalize(probs: List[float]) -> List[float]:
     s = sum(probs)
@@ -47,9 +39,7 @@ def normalize(probs: List[float]) -> List[float]:
         raise ValueError("Sum of probabilities must be positive.")
     return [p / s for p in probs]
 
-
 def shannon_entropy_nats(probs: List[float]) -> float:
-    """H = -sum p ln p (nats)."""
     h = 0.0
     for p in probs:
         if p > 0:
@@ -64,179 +54,187 @@ st.set_page_config(page_title="Race Entropy", page_icon="🐎", layout="centered
 
 st.title("🐎 Race Entropy (Shannon, nats)")
 st.write(
-    "Paste horse **cotes** (decimal like `3.5`, or fractional like `8/1`) "
-    "or probabilities. We’ll normalize them and compute Shannon entropy in **nats**."
+    "Collez les **cotes** (décimales `3.5` ou fractionnelles `8/1`) "
+    "ou des probabilités. On normalise puis on calcule l’entropie de Shannon en **nats**."
 )
 
 with st.sidebar:
-    st.header("Input settings")
-    input_mode = st.radio(
-        "How do you want to enter values?",
-        ["Paste list", "Interactive fields"],
-        index=0,
-    )
+    st.header("Paramètres")
+    input_mode = st.radio("Mode de saisie", ["Liste collée", "Champs interactifs"], index=0)
     value_type = st.radio(
-        "What are you entering?",
-        ["Odds (decimal/fractional)", "Probabilities (0–1)"],
+        "Type de valeurs",
+        ["Cotes (décimales/fractionnelles)", "Probabilités (0–1)"],
         index=0,
-        help="If you choose odds, we convert to implied probabilities and normalize.",
+        help="Avec des cotes, on passe en probabilités implicites puis on normalise."
     )
-    use_comma = st.checkbox("Use comma as decimal separator (e.g., 3,5)", value=True)
+    use_comma = st.checkbox("Virgule comme séparateur décimal (ex. 3,5)", value=True)
     normalize_choice = st.radio(
-        "Normalization for entropy",
-        ["Auto-normalize (recommended)", "Do not normalize (use as-is)"],
+        "Normalisation pour l’entropie",
+        ["Auto-normaliser (recommandé)", "Ne pas normaliser"],
         index=0,
-        help=(
-            "When using odds, bookmaker margin (overround) makes implied probabilities sum to > 1. "
-            "Auto-normalize removes that margin. If you provide probabilities that do not sum to 1, "
-            "auto-normalize fixes that too."
-        ),
+        help=("Avec des cotes, la marge du bookmaker fait que la somme des probabilités dépasse 1. "
+              "L’auto-normalisation enlève cette marge. Si vos probabilités ne somment pas à 1, "
+              "on les renormalise aussi.")
     )
-    show_table = st.checkbox("Show table", value=True)
-    show_chart = st.checkbox("Show bar chart", value=True)
+    show_table = st.checkbox("Afficher le tableau", value=True)
+    show_chart = st.checkbox("Afficher l’histogramme", value=True)
 
-# Collect inputs
+# Saisie
 values: List[float] = []
 
-if input_mode == "Paste list":
+if input_mode == "Liste collée":
     example = "3.5 5 7 10 15"
-    placeholder = example if value_type.startswith("Odds") else "0.28 0.20 0.16 0.11 0.07 ..."
-    raw = st.text_area(
-        "Enter values (separated by spaces, commas, or semicolons).",
-        placeholder=placeholder,
-        height=120,
-    )
+    placeholder = example if value_type.startswith("Cotes") else "0.28 0.20 0.16 0.11 0.07 ..."
+    raw = st.text_area("Entrez les valeurs (séparées par espaces, virgules ou points-virgules).",
+                       placeholder=placeholder, height=120)
     if raw.strip():
         try:
             values = parse_pasted_list(raw, use_comma_decimal=use_comma)
         except Exception as e:
-            st.error(f"Could not parse input: {e}")
-
+            st.error(f"Impossible de parser l’entrée : {e}")
 else:
-    n = st.number_input("Number of horses", min_value=1, max_value=20, value=8, step=1)
+    n = st.number_input("Nombre de chevaux", min_value=1, max_value=20, value=8, step=1)
     values = []
     cols_per_row = 4
     for i in range(n):
         if i % cols_per_row == 0:
             cols = st.columns(cols_per_row)
-        idx_in_row = i % cols_per_row
-        default = 6.0 if value_type.startswith("Odds") else round(1.0 / n, 4)
-        v = cols[idx_in_row].number_input(
-            f"Horse {i+1}",
+        idx = i % cols_per_row
+        default = 6.0 if value_type.startswith("Cotes") else round(1.0 / n, 4)
+        v = cols[idx].number_input(
+            f"Cheval {i+1}",
             value=float(default),
-            min_value=0.0001 if value_type.startswith("Odds") else 0.0,
-            step=0.05 if value_type.startswith("Odds") else 0.01,
+            min_value=0.0001 if value_type.startswith("Cotes") else 0.0,
+            step=0.05 if value_type.startswith("Cotes") else 0.01,
             key=f"horse_{i}",
         )
         values.append(float(v))
 
 if not values:
-    st.info("Enter at least one value to begin.")
+    st.info("Saisissez au moins une valeur pour commencer.")
     st.stop()
 
-# Disallow invalid odds
-if value_type.startswith("Odds"):
+if value_type.startswith("Cotes"):
     bad = [o for o in values if o < 1.0]
     if bad:
-        st.error("All decimal odds must be ≥ 1. Fractional odds like '8/1' are OK (they convert to ≥ 2).")
+        st.error("Toutes les cotes décimales doivent être ≥ 1. Les cotes fractionnelles (ex. '8/1') sont OK.")
         st.stop()
 
-# Build probability vector
+# Probabilités utilisées
 try:
-    if value_type.startswith("Odds"):
+    if value_type.startswith("Cotes"):
         raw_probs, overround = implied_probabilities_from_decimal_odds(values)
         chosen_probs = raw_probs[:]
-        source_note = "Implied from odds (p = 1/odds)."
+        source_note = "Déduites des cotes (p = 1/cote)."
     else:
         raw_probs = values[:]
         overround = None
         chosen_probs = raw_probs[:]
-        source_note = "Provided directly as probabilities."
+        source_note = "Fournies directement (probabilités)."
 
-    if normalize_choice.startswith("Auto-normalize"):
+    if normalize_choice.startswith("Auto-normaliser"):
         probs = normalize(chosen_probs)
-        norm_note = "Normalized to sum = 1."
+        norm_note = "Normalisées pour sommer à 1."
     else:
         probs = chosen_probs
-        norm_note = "No normalization applied."
+        norm_note = "Sans normalisation."
 except Exception as e:
-    st.error(f"Computation error: {e}")
+    st.error(f"Erreur de calcul : {e}")
     st.stop()
 
-# Entropy (nats) and effective number of horses (based on nats)
+# Entropie (nats) + effectif
 H_nats = shannon_entropy_nats(probs)
-effective_n = math.exp(H_nats)  # e^H when H is in nats
+effective_n = math.exp(H_nats)
 
-# Results
-st.subheader("Results")
+# Marge favori vs 2e (p1 - p2) sur les probabilités UTILISÉES
+if len(probs) >= 2:
+    ranked = sorted(list(enumerate(probs, start=1)), key=lambda x: x[1], reverse=True)
+    (fav_idx, p1), (sec_idx, p2) = ranked[0], ranked[1]
+    fav_margin = p1 - p2
+else:
+    fav_idx = sec_idx = None
+    p1 = p2 = None
+    fav_margin = None
 
-m1, m2 = st.columns(2)
-m1.metric("Shannon entropy (nats)", f"{H_nats:.4f}")
-m2.metric("Effective # of horses (exp(H))", f"{effective_n:.3f}")
+# Résultats
+st.subheader("Résultats")
 
-# Uncertainty flag
+if fav_margin is not None:
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Entropie de Shannon (nats)", f"{H_nats:.4f}")
+    c2.metric("Nombre effectif de chevaux (exp(H))", f"{effective_n:.3f}")
+    c3.metric("Marge fav vs 2e (p1 − p2)", f"{fav_margin:.4f}")
+else:
+    c1, c2 = st.columns(2)
+    c1.metric("Entropie de Shannon (nats)", f"{H_nats:.4f}")
+    c2.metric("Nombre effectif de chevaux (exp(H))", f"{effective_n:.3f}")
+    st.warning("Marge fav vs 2e indisponible (moins de 2 chevaux).")
+
+# Drapeau d’incertitude
 if H_nats > 2.36:
-    st.info("🔵 This looks like a **highly uncertain** race (H > 2.36 nats).")
+    st.info("🔵 Course **très incertaine** (H > 2.36 nats).")
 
-# Overround / sum notes
-if value_type.startswith("Odds"):
+# Notes sur la somme/overround
+if value_type.startswith("Cotes"):
     raw_sum = sum(1.0 / o for o in values)
     margin_pct = (raw_sum - 1.0) * 100.0
-    st.caption(
-        f"**Implied prob sum (raw)**: {raw_sum:.4f}  |  **Overround**: {margin_pct:+.2f}%  "
-        f"({source_note} {norm_note})"
-    )
+    st.caption(f"**Somme des proba implicites (brutes)** : {raw_sum:.4f}  |  **Overround** : {margin_pct:+.2f}% "
+               f"({source_note} {norm_note})")
 else:
     s = sum(values)
-    st.caption(f"**Sum of provided probabilities**: {s:.4f}  ({source_note} {norm_note})")
+    st.caption(f"**Somme des probabilités fournies** : {s:.4f}  ({source_note} {norm_note})")
 
-# Table
+# Détail favori / 2e
+if fav_margin is not None:
+    st.caption(
+        f"Favori : Cheval {fav_idx} ({100*p1:.2f}%)  |  2e : Cheval {sec_idx} ({100*p2:.2f}%)  "
+        f"|  Marge (p1−p2) : {fav_margin:.4f}"
+    )
+
+# Tableau
 df = None
 if show_table:
     records = []
     for i, v in enumerate(values, start=1):
-        row = {"Horse": i}
-        if value_type.startswith("Odds"):
-            row["Input (odds)"] = v
-            row["Implied p (raw)"] = 1.0 / v
+        row = {"Cheval": i}
+        if value_type.startswith("Cotes"):
+            row["Entrée (cote)"] = v
+            row["p implicite (brut)"] = 1.0 / v
         else:
-            row["Input p (raw)"] = v
-        row["p used for entropy"] = probs[i - 1]
-        row["p used (%)"] = 100.0 * probs[i - 1]
+            row["p fournie (brute)"] = v
+        row["p utilisée"] = probs[i - 1]
+        row["p utilisée (%)"] = 100.0 * probs[i - 1]
         records.append(row)
     df = pd.DataFrame.from_records(records)
     st.dataframe(df, use_container_width=True)
 
-# Chart
+# Histogramme
 if show_chart:
     chart_df = pd.DataFrame(
-        {"Horse": [f"{i}" for i in range(1, len(probs) + 1)],
-         "Probability (%)": [100.0 * p for p in probs]}
-    ).set_index("Horse")
+        {"Cheval": [f"{i}" for i in range(1, len(probs) + 1)],
+         "Probabilité (%)": [100.0 * p for p in probs]}
+    ).set_index("Cheval")
     st.bar_chart(chart_df, use_container_width=True)
 
 # Download CSV
 if df is None:
     df = pd.DataFrame({
-        "Horse": list(range(1, len(probs) + 1)),
-        "p used for entropy": probs,
-        "p used (%)": [100.0 * p for p in probs],
+        "Cheval": list(range(1, len(probs) + 1)),
+        "p utilisée": probs,
+        "p utilisée (%)": [100.0 * p for p in probs],
     })
 csv = df.to_csv(index=False)
-st.download_button(
-    "⬇️ Download table as CSV",
-    data=csv,
-    file_name="race_entropy_table.csv",
-    mime="text/csv",
-)
+st.download_button("⬇️ Télécharger le tableau en CSV", data=csv,
+                   file_name="race_entropy_table.csv", mime="text/csv")
 
 # Footer
 st.write("---")
 st.caption(
-    "Notes:\n"
-    "- Decimal **cotes** (e.g., 3.5) convert to implied p = 1/odds. Fractional odds (e.g., 8/1) are supported and convert to decimal automatically.\n"
-    "- Bookmaker margin (overround) makes raw implied probabilities sum to > 1. **Auto-normalize** removes this margin for entropy.\n"
-    "- Shannon entropy is reported in **nats**: H = -∑ p ln p. The effective number of horses is **exp(H)**."
+    "Notes :\n"
+    "- Les **cotes** (ex. 3.5) sont converties en p = 1/cote. Les cotes **fractionnelles** (ex. 8/1) sont supportées.\n"
+    "- L’**overround** du bookmaker gonfle la somme des probabilités > 1. L’option d’**auto-normalisation** l’enlève.\n"
+    "- Entropie en **nats** : H = -∑ p ln p. Nombre effectif = **exp(H)**.\n"
+    "- *Marge fav vs 2e* : calculée sur les probabilités **utilisées** (après normalisation si activée)."
 )
 
 if __name__ == "__main__":
