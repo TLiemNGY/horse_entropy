@@ -142,11 +142,11 @@ except Exception as e:
     st.error(f"Erreur de calcul : {e}")
     st.stop()
 
-# Entropie (nats) + effectif
+# Entropie + effectif + classement fav/2e
 H_nats = shannon_entropy_nats(probs)
 effective_n = math.exp(H_nats)
+nb_partants = len(probs)
 
-# Marge favori vs 2e (p1 - p2) sur les probabilités UTILISÉES
 if len(probs) >= 2:
     ranked = sorted(list(enumerate(probs, start=1)), key=lambda x: x[1], reverse=True)
     (fav_idx, p1), (sec_idx, p2) = ranked[0], ranked[1]
@@ -156,23 +156,54 @@ else:
     p1 = p2 = None
     fav_margin = None
 
-# Résultats
+# -------------------------------
+# RÉSULTATS — Ordre et présentation demandés
+# -------------------------------
 st.subheader("Résultats")
 
+# 1) Entropie (grosse métrique) + 2) Marge (grosse métrique)
+c1, c2 = st.columns(2)
+c1.metric("Entropie de Shannon (nats)", f"{H_nats:.4f}")
 if fav_margin is not None:
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Entropie de Shannon (nats)", f"{H_nats:.4f}")
-    c2.metric("Nombre effectif de chevaux (exp(H))", f"{effective_n:.3f}")
-    c3.metric("Marge fav vs 2e (p1 − p2)", f"{fav_margin:.4f}")
+    c2.metric("Marge fav vs 2e (p1 − p2)", f"{fav_margin:.4f}")
 else:
-    c1, c2 = st.columns(2)
-    c1.metric("Entropie de Shannon (nats)", f"{H_nats:.4f}")
-    c2.metric("Nombre effectif de chevaux (exp(H))", f"{effective_n:.3f}")
-    st.warning("Marge fav vs 2e indisponible (moins de 2 chevaux).")
+    c2.metric("Marge fav vs 2e (p1 − p2)", "N/A")
 
-# Drapeau d’incertitude
+# Bandeau d’incertitude (optionnel)
 if H_nats > 2.36:
     st.info("🔵 Course **très incertaine** (H > 2.36 nats).")
+
+# Sous-ligne en plus petit : nombre réel puis effectif
+st.caption(f"**Nombre de partants (réel)** : {nb_partants}  |  **Nombre effectif de chevaux (exp(H))** : {effective_n:.3f}")
+
+# Détail favori / 2e en petit aussi
+if fav_margin is not None:
+    st.caption(
+        f"Favori : Cheval {fav_idx} ({100*p1:.2f}%)  |  2e : Cheval {sec_idx} ({100*p2:.2f}%)"
+    )
+
+# -------------------------------
+# Paragraphes explicatifs (un par métrique)
+# -------------------------------
+st.markdown("### Interprétation des métriques")
+st.markdown(
+    "**Entropie de Shannon (nats)** — Mesure l’incertitude globale de la course : "
+    "H = −∑ p·ln p. Plus H est élevé, plus la répartition des chances est homogène. "
+    "Pour n partants équiprobables, H = ln(n). Un seuil pratique : au-delà de 2.36 nats, la course est considérée **très incertaine**."
+)
+st.markdown(
+    "**Marge favori vs 2e (p1 − p2)** — Différence entre la probabilité du favori et celle du 2e, "
+    "calculée sur les probabilités **utilisées** (après normalisation si activée). "
+    "Plus cette marge est grande, plus le favori se détache. Proche de 0 ⇒ lutte serrée en tête."
+)
+st.markdown(
+    "**Nombre de partants (réel)** — Compte brut des chevaux considérés dans le calcul. "
+    "Il ne dit rien sur l’équilibre de la course, seulement sur sa taille."
+)
+st.markdown(
+    "**Nombre effectif de chevaux (exp(H))** — Nombre de chevaux **équiprobables** qui donneraient la **même incertitude** que la course réelle. "
+    "Toujours ≤ au nombre réel : s’il y a un gros favori, le nombre effectif baisse ; s’ils sont proches, il se rapproche du réel."
+)
 
 # Notes sur la somme/overround
 if value_type.startswith("Cotes"):
@@ -183,13 +214,6 @@ if value_type.startswith("Cotes"):
 else:
     s = sum(values)
     st.caption(f"**Somme des probabilités fournies** : {s:.4f}  ({source_note} {norm_note})")
-
-# Détail favori / 2e
-if fav_margin is not None:
-    st.caption(
-        f"Favori : Cheval {fav_idx} ({100*p1:.2f}%)  |  2e : Cheval {sec_idx} ({100*p2:.2f}%)  "
-        f"|  Marge (p1−p2) : {fav_margin:.4f}"
-    )
 
 # Tableau
 df = None
