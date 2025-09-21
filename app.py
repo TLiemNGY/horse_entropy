@@ -9,57 +9,36 @@ import streamlit as st
 # Helpers
 # -------------------------------
 def parse_fractional_odds(token: str) -> float:
-    """
-    Convert fractional odds like '8/1' or '5/2' to decimal odds.
-    Decimal odds = 1 + (numerator / denominator)
-    """
+    """Convert fractional odds like '8/1' or '5/2' to decimal odds."""
     num, den = token.split("/", 1)
     return 1.0 + (float(num) / float(den))
 
 
 def parse_numeric_token(token: str, use_comma_decimal: bool) -> float:
-    """
-    Parse a token that might be:
-      - decimal with dot or comma (e.g. '3.5' or '3,5')
-      - fractional odds 'a/b'
-    """
+    """Parse a token that might be decimal (dot/comma) or fractional odds 'a/b'."""
     token = token.strip()
     if not token:
         raise ValueError("Empty token")
-
     if "/" in token:
         return parse_fractional_odds(token)
-
     if use_comma_decimal:
         token = token.replace(",", ".")
     return float(token)
 
 
 def parse_pasted_list(raw: str, use_comma_decimal: bool) -> List[float]:
-    """
-    Split by comma, semicolon, whitespace. Keep tokens with numbers or a '/'.
-    """
-    # Normalize separators
+    """Split by comma, semicolon, whitespace."""
     tmp = raw.replace(";", " ").replace(",", " ").replace("\n", " ").replace("\t", " ")
     tokens = [t for t in tmp.split(" ") if t.strip() != ""]
     if not tokens:
         return []
-
-    values = []
-    for tok in tokens:
-        values.append(parse_numeric_token(tok, use_comma_decimal))
-    return values
+    return [parse_numeric_token(tok, use_comma_decimal) for tok in tokens]
 
 
 def implied_probabilities_from_decimal_odds(odds: List[float]) -> Tuple[List[float], float]:
-    """
-    Convert decimal odds to implied probabilities, then return:
-      - raw implied probs p_i = 1/odds_i
-      - overround (sum(p_i) - 1.0)
-    """
+    """Return raw implied probs p_i = 1/odds_i and overround (sum(p_i)-1)."""
     raw = [1.0 / o for o in odds]
-    overround = sum(raw) - 1.0
-    return raw, overround
+    return raw, (sum(raw) - 1.0)
 
 
 def normalize(probs: List[float]) -> List[float]:
@@ -69,12 +48,12 @@ def normalize(probs: List[float]) -> List[float]:
     return [p / s for p in probs]
 
 
-def shannon_entropy_bits(probs: List[float]) -> float:
-    # H = -sum p log2 p, with convention 0 log 0 = 0
+def shannon_entropy_nats(probs: List[float]) -> float:
+    """H = -sum p ln p (nats)."""
     h = 0.0
     for p in probs:
         if p > 0:
-            h -= p * math.log2(p)
+            h -= p * math.log(p)
     return h
 
 
@@ -83,10 +62,10 @@ def shannon_entropy_bits(probs: List[float]) -> float:
 # -------------------------------
 st.set_page_config(page_title="Race Entropy", page_icon="🐎", layout="centered")
 
-st.title("🐎 Race Entropy (Shannon)")
+st.title("🐎 Race Entropy (Shannon, nats)")
 st.write(
-    "Paste horse **cotes** (decimal odds like `3.5`, or fractional like `8/1`) "
-    "or probabilities. We’ll normalize them and compute Shannon entropy."
+    "Paste horse **cotes** (decimal like `3.5`, or fractional like `8/1`) "
+    "or probabilities. We’ll normalize them and compute Shannon entropy in **nats**."
 )
 
 with st.sidebar:
@@ -102,18 +81,17 @@ with st.sidebar:
         index=0,
         help="If you choose odds, we convert to implied probabilities and normalize.",
     )
-    use_comma = st.checkbox(
-        "Use comma as decimal separator (e.g., 3,5)", value=True
-    )
+    use_comma = st.checkbox("Use comma as decimal separator (e.g., 3,5)", value=True)
     normalize_choice = st.radio(
         "Normalization for entropy",
         ["Auto-normalize (recommended)", "Do not normalize (use as-is)"],
         index=0,
-        help="When using odds, bookmaker margin (overround) makes summed implied probabilities > 1. "
-             "Auto-normalize removes that margin. If you provide probabilities that do not sum to 1, "
-             "auto-normalize fixes that too.",
+        help=(
+            "When using odds, bookmaker margin (overround) makes implied probabilities sum to > 1. "
+            "Auto-normalize removes that margin. If you provide probabilities that do not sum to 1, "
+            "auto-normalize fixes that too."
+        ),
     )
-
     show_table = st.checkbox("Show table", value=True)
     show_chart = st.checkbox("Show bar chart", value=True)
 
@@ -152,7 +130,6 @@ else:
         )
         values.append(float(v))
 
-# Validate and compute
 if not values:
     st.info("Enter at least one value to begin.")
     st.stop()
@@ -164,21 +141,18 @@ if value_type.startswith("Odds"):
         st.error("All decimal odds must be ≥ 1. Fractional odds like '8/1' are OK (they convert to ≥ 2).")
         st.stop()
 
+# Build probability vector
 try:
     if value_type.startswith("Odds"):
-        # From odds to implied probabilities
         raw_probs, overround = implied_probabilities_from_decimal_odds(values)
         chosen_probs = raw_probs[:]
         source_note = "Implied from odds (p = 1/odds)."
-
     else:
-        # Direct probabilities
         raw_probs = values[:]
-        overround = None  # not applicable
+        overround = None
         chosen_probs = raw_probs[:]
         source_note = "Provided directly as probabilities."
 
-    # Normalize if requested
     if normalize_choice.startswith("Auto-normalize"):
         probs = normalize(chosen_probs)
         norm_note = "Normalized to sum = 1."
@@ -189,20 +163,22 @@ except Exception as e:
     st.error(f"Computation error: {e}")
     st.stop()
 
-# Entropy measures
-H_bits = shannon_entropy_bits(probs)
-H_nats = H_bits * math.log(2.0)  # convert bits -> nats
-effective_n = 2 ** H_bits        # “effective number of equally likely horses”
+# Entropy (nats) and effective number of horses (based on nats)
+H_nats = shannon_entropy_nats(probs)
+effective_n = math.exp(H_nats)  # e^H when H is in nats
 
-# Metrics header
+# Results
 st.subheader("Results")
 
-m1, m2, m3 = st.columns(3)
-m1.metric("Shannon entropy (bits)", f"{H_bits:.4f}")
-m2.metric("Shannon entropy (nats)", f"{H_nats:.4f}")
-m3.metric("Effective # of horses (2^H)", f"{effective_n:.3f}")
+m1, m2 = st.columns(2)
+m1.metric("Shannon entropy (nats)", f"{H_nats:.4f}")
+m2.metric("Effective # of horses (exp(H))", f"{effective_n:.3f}")
 
-# Overround / margin (only when odds provided)
+# Uncertainty flag
+if H_nats > 2.36:
+    st.info("🔵 This looks like a **highly uncertain** race (H > 2.36 nats).")
+
+# Overround / sum notes
 if value_type.startswith("Odds"):
     raw_sum = sum(1.0 / o for o in values)
     margin_pct = (raw_sum - 1.0) * 100.0
@@ -212,9 +188,7 @@ if value_type.startswith("Odds"):
     )
 else:
     s = sum(values)
-    st.caption(
-        f"**Sum of provided probabilities**: {s:.4f}  ({source_note} {norm_note})"
-    )
+    st.caption(f"**Sum of provided probabilities**: {s:.4f}  ({source_note} {norm_note})")
 
 # Table
 df = None
@@ -243,7 +217,6 @@ if show_chart:
 
 # Download CSV
 if df is None:
-    # Build a minimal DF if user hid the table
     df = pd.DataFrame({
         "Horse": list(range(1, len(probs) + 1)),
         "p used for entropy": probs,
@@ -263,7 +236,7 @@ st.caption(
     "Notes:\n"
     "- Decimal **cotes** (e.g., 3.5) convert to implied p = 1/odds. Fractional odds (e.g., 8/1) are supported and convert to decimal automatically.\n"
     "- Bookmaker margin (overround) makes raw implied probabilities sum to > 1. **Auto-normalize** removes this margin for entropy.\n"
-    "- Shannon entropy H (bits) uses log base 2. The effective number of horses is 2^H."
+    "- Shannon entropy is reported in **nats**: H = -∑ p ln p. The effective number of horses is **exp(H)**."
 )
 
 if __name__ == "__main__":
